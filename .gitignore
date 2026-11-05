@@ -1,0 +1,10 @@
+node_modules/
+dist/
+data/
+pi-slack-data/
+.env
+.keys
+*.log
+*.tgz
+*.tar.gz
+.DS_Store

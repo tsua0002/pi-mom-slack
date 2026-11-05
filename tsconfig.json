@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "allowImportingTsExtensions": true,
+    "rewriteRelativeImportExtensions": true,
+    "erasableSyntaxOnly": true,
+    "verbatimModuleSyntax": true,
+    "skipLibCheck": true,
+    "types": ["node"],
+    "outDir": "dist",
+    "rootDir": ".",
+    "paths": { "pi-mom-slack": ["./src/index.ts"] }
+  },
+  "include": ["src/**/*.ts", "test/**/*.ts", "examples/**/*.ts"]
+}

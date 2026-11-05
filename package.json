@@ -1,0 +1,50 @@
+{
+  "name": "pi-mom-slack",
+  "version": "0.1.0",
+  "description": "Run the pi coding agent in Slack: one pi session per thread, in one command.",
+  "license": "MIT",
+  "author": "tsua0002",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tsua0002/pi-mom-slack.git"
+  },
+  "homepage": "https://github.com/tsua0002/pi-mom-slack#readme",
+  "bugs": "https://github.com/tsua0002/pi-mom-slack/issues",
+  "keywords": ["pi", "pi-coding-agent", "slack", "bot", "agent", "mom"],
+  "bin": {
+    "pi-mom-slack": "dist/cli.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": ["dist", "manifest.json", "CHANGELOG.md", "README.md", "LICENSE"],
+  "engines": {
+    "node": ">=22.19"
+  },
+  "scripts": {
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
+    "check": "tsc --noEmit",
+    "test": "vitest run",
+    "start": "node --experimental-strip-types src/cli.ts",
+    "prepack": "npm run build"
+  },
+  "dependencies": {
+    "@earendil-works/pi-ai": "1.5.0",
+    "@earendil-works/pi-coding-agent": "1.5.0",
+    "@slack/socket-mode": "3.1.1",
+    "@slack/web-api": "8.3.0",
+    "typebox": "1.3.27"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.1",
+    "typescript": "5.9.3",
+    "vitest": "5.1.0"
+  }
+}

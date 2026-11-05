@@ -1,0 +1,176 @@
+# One workflow for every npm publish (npm trusted publishing names a single workflow file):
+#  - a pushed tag v* publishes that version;
+#  - every day, a new pi release is tested; green tests publish a patch version,
+#    red tests ask pi to fix the code and open a pull request for a human. Nothing is published without green tests.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  schedule:
+    - cron: "17 5 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  pi-update:
+    if: github.event_name != 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+    env:
+      PI: "@earendil-works/pi-coding-agent"
+    steps:
+      # No git credentials in the working copy: pi runs below with --approve on a brand new pi release, and must not
+      # be able to push. The push steps pass the token explicitly.
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+
+      - name: Look for a new pi release
+        id: pi
+        run: |
+          current=$(node -p "require('./package.json').dependencies['$PI']")
+          latest=$(npm view "$PI" version)
+          echo "current=$current latest=$latest"
+          echo "current=$current" >> "$GITHUB_OUTPUT"
+          echo "latest=$latest" >> "$GITHUB_OUTPUT"
+          if [ "$current" = "$latest" ]; then echo "new=false" >> "$GITHUB_OUTPUT"; else echo "new=true" >> "$GITHUB_OUTPUT"; fi
+
+      - name: Align on pi ${{ steps.pi.outputs.latest }}
+        if: steps.pi.outputs.new == 'true'
+        run: |
+          v=${{ steps.pi.outputs.latest }}
+          ai=$(npm view "$PI@$v" dependencies.@earendil-works/pi-ai)
+          tb=$(npm view "$PI@$v" dependencies.typebox)
+          npm install --save-exact --no-audit --no-fund "$PI@$v" "@earendil-works/pi-ai@$ai" "typebox@$tb"
+
+      - name: Test
+        id: test
+        if: steps.pi.outputs.new == 'true'
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          { npm run check && npm test && npm run build; } 2>&1 | tee test-output.txt
+
+      - name: Commit, tag and hand over to publish
+        id: release
+        if: steps.pi.outputs.new == 'true' && steps.test.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          version=$(npm version patch --no-git-tag-version | tr -d v)
+          node -e '
+            const fs = require("fs");
+            const log = fs.readFileSync("CHANGELOG.md", "utf8");
+            const entry = `## ${process.argv[1]}\n\n- Works with pi ${process.argv[2]}.\n\n`;
+            fs.writeFileSync("CHANGELOG.md", log.replace(/^(# Changelog\n\n)/, `$1${entry}`));
+          ' "$version" "${{ steps.pi.outputs.latest }}"
+          git add package.json package-lock.json CHANGELOG.md
+          git commit -m "Align on pi ${{ steps.pi.outputs.latest }}"
+          git tag "v$version"
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git" HEAD:main "v$version"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+
+      # Tests failed: pi fixes the code, a human reviews the pull request.
+      - name: Ask pi to fix the code
+        if: steps.pi.outputs.new == 'true' && steps.test.outcome == 'failure'
+        continue-on-error: true
+        # One OpenRouter key gives pi access to most models. PI_MODEL (repository variable) picks one.
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          PI_MODEL: ${{ vars.PI_MODEL || 'openrouter/anthropic/claude-sonnet-5.5' }}
+        run: |
+          tail -c 20000 test-output.txt > failure.txt
+          npx pi --print --no-session --approve --model "$PI_MODEL" "$(cat <<PROMPT
+          This repository is pi-mom-slack, a Slack bot built on the npm packages of pi. Read AGENTS.md first.
+          Its dependencies were just updated from pi ${{ steps.pi.outputs.current }} to pi ${{ steps.pi.outputs.latest }}, and the checks fail.
+          The failing output is in failure.txt. pi's changelog is in node_modules/@earendil-works/pi-coding-agent/CHANGELOG.md.
+          Fix the code so that \`npm run check\` and \`npm test\` pass with the new pi version. Run both to verify.
+          Rules: do not change dependency versions in package.json, do not delete, skip or weaken tests,
+          change tests only where pi's API legitimately changed, keep the changes minimal.
+          End with a short summary of what you changed and why.
+          PROMPT
+          )" | tee pi-summary.txt
+          rm -f failure.txt
+
+      - name: Open a pull request for review
+        if: steps.pi.outputs.new == 'true' && steps.test.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set +e
+          { npm run check && npm test; } > retest.txt 2>&1
+          status=$?
+          set -e
+          v=${{ steps.pi.outputs.latest }}
+          branch="pi-update/$v"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$branch"
+          rm -f test-output.txt
+          touch pi-summary.txt
+          git add -A -- . ':!retest.txt' ':!pi-summary.txt'
+          git commit -m "Align on pi $v (fix proposed by pi)" || git commit --allow-empty -m "Align on pi $v (no fix found)"
+          git push --force "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git" "$branch"
+          if [ "$status" -eq 0 ]; then result="Checks pass after the fix."; else result="Checks still fail after the fix: needs a human."; fi
+          {
+            echo "pi $v broke the checks. pi proposed this fix. $result"
+            echo
+            echo "### pi's summary"
+            echo
+            tail -c 6000 pi-summary.txt
+            echo
+            echo "### Checks after the fix"
+            echo
+            echo '```'
+            tail -c 4000 retest.txt
+            echo '```'
+            echo
+            echo "Merging does not publish. After review, tag a release: \`npm version patch && git push --follow-tags\`."
+          } > body.md
+          gh pr view "$branch" > /dev/null 2>&1 && gh pr edit "$branch" --body-file body.md \
+            || gh pr create --head "$branch" --base main --title "Align on pi $v" --body-file body.md
+
+  publish:
+    needs: pi-update
+    if: always() && (github.event_name == 'push' || needs.pi-update.outputs.tag != '')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event_name == 'push' && github.ref || needs.pi-update.outputs.tag }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - run: npm install -g npm@latest
+      - run: npm ci
+      - run: npm run check
+      - run: npm test
+      - name: Tag and package version agree
+        env:
+          TAG: ${{ github.event_name == 'push' && github.ref_name || needs.pi-update.outputs.tag }}
+        run: test "$TAG" = "v$(node -p 'require("./package.json").version')"
+      - run: npm publish
