@@ -1,6 +1,6 @@
 {
   "name": "pi-mom-slack",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Run the pi coding agent in Slack: one pi session per thread, in one command.",
   "license": "MIT",
   "author": "tsua0002",
@@ -11,7 +11,14 @@
   },
   "homepage": "https://github.com/tsua0002/pi-mom-slack#readme",
   "bugs": "https://github.com/tsua0002/pi-mom-slack/issues",
-  "keywords": ["pi", "pi-coding-agent", "slack", "bot", "agent", "mom"],
+  "keywords": [
+    "pi",
+    "pi-coding-agent",
+    "slack",
+    "bot",
+    "agent",
+    "mom"
+  ],
   "bin": {
     "pi-mom-slack": "dist/cli.js"
   },
@@ -24,7 +31,13 @@
     },
     "./package.json": "./package.json"
   },
-  "files": ["dist", "manifest.json", "CHANGELOG.md", "README.md", "LICENSE"],
+  "files": [
+    "dist",
+    "manifest.json",
+    "CHANGELOG.md",
+    "README.md",
+    "LICENSE"
+  ],
   "engines": {
     "node": ">=22.19"
   },
