@@ -8,7 +8,7 @@ npx pi-mom-slack
 
 <p align="center"><img src="docs/screenshots/hero.jpg" alt="A request in #demo: 👀, then the thread with the status line, the uploaded primes.txt, the report, and ✅" width="85%"></p>
 
-Inspired by `mom`, the Slack bot removed from pi-mono on 30 April 2026. Not affiliated with Earendil.
+Inspired by `mom`, the Slack bot removed from pi-mono on 30 April 2026. Its last release, `@mariozechner/pi-mom` 0.70.6, is still on npm but tied to the pre-1.0 pi under the old `@mariozechner` scope. Not affiliated with Earendil.
 
 ## What you get
 
@@ -150,7 +150,7 @@ After=network-online.target
 
 [Service]
 WorkingDirectory=%h/pi-slack
-ExecStart=/usr/bin/env npx --yes pi-mom-slack@0.1.0
+ExecStart=/usr/bin/env npx --yes pi-mom-slack@0.1.1
 Restart=on-failure
 
 [Install]
@@ -163,6 +163,21 @@ sudo loginctl enable-linger $USER   # keep it running after logout
 ```
 
 Pin the version and update it on purpose: the startup message lists what changed. `pi-mom-slack@latest` also works, but then every restart may run a release you have not read, including the automatic pi updates. Under systemd, `npx` must be on the unit's `PATH` (with nvm, set `Environment=PATH=…` to nvm's `bin` folder), or use `scripts/deploy-ssh.sh`, which does it for you.
+
+## Compared with mom
+
+pi-mom-slack is not a port of mom. It keeps the idea (pi in Slack, one command) and builds on the current pi SDK.
+
+| | mom 0.70.6 | pi-mom-slack |
+|---|---|---|
+| pi | own tools on pi 0.70 (`@mariozechner`) | pi's SDK and tools, `@earendil-works` 1.x, updated with pi |
+| Conversation unit | one context per channel, with the channel log | one pi session per thread |
+| Configuration | its own folder (`~/.pi/mom/`) | your pi: model, credentials, skills, `AGENTS.md` |
+| Sandbox | Docker mode | runs as the bot's user; use a dedicated user or a container |
+| Scheduled events | yes (one-shot, periodic, immediate) | not yet |
+| Memory files | `MEMORY.md`, global and per channel | pi's context files |
+| Commands | | `!stop`, `!status`, `!model`, `!help` |
+| Extending | | `customTools`, `commands`, `hooks` |
 
 ## Security
 
