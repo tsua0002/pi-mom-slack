@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.2
+
+- Works with pi 1.5.2.
+
 ## 0.1.1
 
 - First release published from GitHub Actions (npm trusted publishing).
