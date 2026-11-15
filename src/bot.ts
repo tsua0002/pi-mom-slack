@@ -216,7 +216,8 @@ export function createSlackBot(options: SlackBotOptions): SlackBotHandle {
 		if (att.errors.length) await t.post(`_File(s) not retrieved:\n${att.errors.join("\n")}_`);
 		const name = await slack.userName(msg.user);
 		const body = await slack.resolveMentions(msg.text);
-		const files = att.saved.length ? `\n\nAttached files (in the working directory):\n${att.saved.map((p) => `- ${p}`).join("\n")}` : "";
+		const files = (att.saved.length ? `\n\nAttached files (in the working directory):\n${att.saved.map((p) => `- ${p}`).join("\n")}` : "")
+			+ (att.errors.length ? `\n\nSome attached files could not be retrieved. Do not claim to have read them:\n${att.errors.join("\n")}` : "");
 		await runInThread(t, msg.user, `[${name}] ${body}${files}`, { ts: msg.ts, images: att.images, resumed: false });
 	}
 

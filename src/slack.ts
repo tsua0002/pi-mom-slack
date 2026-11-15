@@ -10,6 +10,8 @@ export interface SlackFile {
 	mimetype: string;
 	size: number;
 	url: string;
+	/** Metadata lookup failed; report the attachment instead of silently dropping it. */
+	error?: string;
 }
 
 export interface IncomingMessage {
@@ -115,6 +117,31 @@ export class SlackApi {
 		await this.web.filesUploadV2({ channel_id: channel, thread_ts: threadTs, file, filename, ...(comment ? { initial_comment: comment } : {}) });
 	}
 
+	/** Socket Mode may provide only a file ID (file_access=check_file_info). Resolve it before downloading. */
+	async resolveFiles(files: unknown): Promise<SlackFile[]> {
+		if (!Array.isArray(files)) return [];
+		const downloadUrl = (file: Record<string, unknown>) => [file.url_private_download, file.url_private]
+			.find((url): url is string => typeof url === "string" && Boolean(url.trim()));
+		return Promise.all(files.map(async (raw): Promise<SlackFile> => {
+			const f = raw && typeof raw === "object" ? raw as Record<string, unknown> : {};
+			let info = f;
+			try {
+				if (!downloadUrl(f)) {
+					if (typeof f.id !== "string") throw new Error("Slack supplied no file ID or download URL");
+					const response = await this.web.files.info({ file: f.id });
+					if (!response.file) throw new Error("Slack returned no file metadata");
+					info = response.file as unknown as Record<string, unknown>;
+				}
+				const url = downloadUrl(info);
+				if (!url) throw new Error("Slack returned no download URL; check file access and files:read");
+				return { name: String(info.name ?? f.name ?? "file"), mimetype: String(info.mimetype ?? ""), size: Number(info.size ?? 0), url };
+			} catch (e) {
+				const code = slackError(e);
+				return { name: String(f.name ?? f.id ?? "file"), mimetype: "", size: 0, url: "", error: code ? `Slack file lookup failed (${code}); check file access and files:read` : "Slack file metadata could not be resolved; check file access and files:read" };
+			}
+		}));
+	}
+
 	/** Downloads a private Slack file with the bot token (files:read). */
 	async download(url: string, maxBytes: number): Promise<Buffer> {
 		if (!isSlackFileUrl(url)) throw new Error("not a Slack file URL");
@@ -218,25 +245,20 @@ export class SlackBot {
 		const e = (body as any)?.event;
 		if (process.env.PI_SLACK_DEBUG) console.log(`[slack] event type=${e?.type} channel_type=${e?.channel_type} subtype=${e?.subtype ?? "-"}`);
 		// file_share is a normal message with attachments; every other subtype (edits, joins, bots) is ignored.
-		if (!e || e.bot_id || (e.subtype && e.subtype !== "file_share") || !e.user || e.user === this.botUserId || typeof e.text !== "string") return;
+		if (!e || e.bot_id || (e.subtype && e.subtype !== "file_share") || !e.user || e.user === this.botUserId || (typeof e.text !== "string" && !Array.isArray(e.files))) return;
+		const rawText = typeof e.text === "string" ? e.text : "";
 		const isDirect = e.channel_type === "im";
 		const threadTs: string = e.thread_ts ?? e.ts;
 		const mention = `<@${this.botUserId}>`;
-		const mentioned = e.type === "app_mention" || e.text.includes(mention);
+		const mentioned = e.type === "app_mention" || rawText.includes(mention);
 		const inActiveThread = Boolean(e.thread_ts) && this.activeThreads.has(`${e.channel}:${e.thread_ts}`);
 		// In channels, a mention arrives twice (app_mention and message): only app_mention counts, unless the thread
 		// is already active, where a plain reply is enough.
 		if (e.type === "message" && !isDirect && !inActiveThread) return;
 		if (!(mentioned || isDirect || inActiveThread)) return;
 		if (!this.claim(e.channel, e.ts)) return;
-		const text = decodeEntities(e.text.split(mention).join("")).trim();
-		const files: SlackFile[] = Array.isArray(e.files)
-			? e.files
-					// biome-ignore lint/suspicious/noExplicitAny: untyped Slack payload
-					.filter((f: any) => f && typeof f.url_private === "string")
-					// biome-ignore lint/suspicious/noExplicitAny: untyped Slack payload
-					.map((f: any) => ({ name: String(f.name ?? "file"), mimetype: String(f.mimetype ?? ""), size: Number(f.size ?? 0), url: f.url_private }))
-			: [];
+		const text = decodeEntities(rawText.split(mention).join("")).trim();
+		const files = await this.api.resolveFiles(e.files);
 		await this.handler({ channel: e.channel, threadTs, ts: e.ts, user: e.user, text, isDirect, mentioned, files }).catch((err: unknown) =>
 			console.error("[slack] handler error", err),
 		);

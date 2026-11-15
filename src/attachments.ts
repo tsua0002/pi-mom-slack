@@ -35,6 +35,7 @@ export async function saveAttachments(
 	mkdirSync(join(workspace, rel), { recursive: true });
 	for (const [i, f] of files.entries()) {
 		try {
+			if (f.error) throw new Error(f.error);
 			const buf = await download(f.url, MAX_FILE);
 			const path = join(rel, safeName(f.name, i));
 			writeFileSync(join(workspace, path), buf);
