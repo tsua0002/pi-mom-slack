@@ -9,6 +9,7 @@ function bot() {
 }
 
 describe("dispatch", () => {
+	afterEach(() => vi.restoreAllMocks());
 	it("handles a channel mention once, strips it, decodes entities", async () => {
 		const { b, got } = bot();
 		await b.dispatch({ event: { type: "app_mention", channel: "C1", user: "U1", ts: "1.1", text: "<@UBOT> a &lt; b &amp;&amp; c" } });
@@ -42,6 +43,34 @@ describe("dispatch", () => {
 		b.trackThread("C1", "9.1");
 		await b.dispatch({ event: { ...reply, ts: "9.3" } });
 		expect(got[0]).toMatchObject({ threadTs: "9.1", ts: "9.3", text: "and then?" });
+	});
+
+	it("resolves ID-only snippet files in a followed thread before dispatch, once", async () => {
+		const { b, got } = bot();
+		b.trackThread("C1", "9.1");
+		const info = vi.spyOn(b.api.web.files, "info").mockResolvedValue({ ok: true, file: { id: "F1", name: "projet.html", mode: "snippet", mimetype: "text/plain", size: 13620, url_private: "https://files.slack.com/view", url_private_download: "https://files.slack.com/download" } });
+		const event = { type: "message", subtype: "file_share", channel: "C1", user: "U1", ts: "9.2", thread_ts: "9.1", text: "Here", files: [{ id: "F1", file_access: "check_file_info" }] };
+		await b.dispatch({ event });
+		await b.dispatch({ event });
+		expect(info).toHaveBeenCalledExactlyOnceWith({ file: "F1" });
+		expect(got).toHaveLength(1);
+		expect(got[0]?.files).toEqual([{ name: "projet.html", mimetype: "text/plain", size: 13620, url: "https://files.slack.com/download" }]);
+	});
+
+	it("accepts a file-only event without a text field", async () => {
+		const { b, got } = bot();
+		await b.dispatch({ event: { type: "message", subtype: "file_share", channel: "D1", channel_type: "im", user: "U1", ts: "5.6", files: [{ name: "a.html", url_private_download: "https://files.slack.com/a.html" }] } });
+		expect(got[0]).toMatchObject({ text: "", files: [{ name: "a.html", url: "https://files.slack.com/a.html" }] });
+	});
+
+	it("keeps inaccessible file references as explicit errors", async () => {
+		const { b, got } = bot();
+		vi.spyOn(b.api.web.files, "info").mockRejectedValue(Object.assign(new Error("private details"), { data: { error: "missing_scope" } }));
+		await b.dispatch({ event: { type: "message", subtype: "file_share", channel: "D1", channel_type: "im", user: "U1", ts: "5.7", text: "Here", files: [{ id: "F1" }, { name: "missing" }] } });
+		expect(got[0]?.files).toHaveLength(2);
+		expect(got[0]?.files[0]?.error).toContain("missing_scope");
+		expect(got[0]?.files[1]?.error).toContain("could not be resolved");
+		expect(JSON.stringify(got)).not.toContain("private details");
 	});
 
 	it("accepts a message with an attached file (subtype file_share)", async () => {
@@ -98,6 +127,26 @@ describe("SlackApi", () => {
 		return { slack: new SlackApi(web as never), calls };
 	}
 
+	it("uses complete file metadata without another API request", async () => {
+		const info = vi.fn();
+		const { slack } = api({ files: { info } });
+		expect(await slack.resolveFiles([{ name: "a.html", mimetype: "text/html", size: 5, url_private: "https://files.slack.com/a", url_private_download: "" }])).toEqual([
+			{ name: "a.html", mimetype: "text/html", size: 5, url: "https://files.slack.com/a" },
+		]);
+		expect(info).not.toHaveBeenCalled();
+	});
+
+	it("hydrates empty URLs and reports successful lookups without usable metadata", async () => {
+		const info = vi.fn().mockResolvedValueOnce({ ok: true, file: { name: "a.txt", url_private: "https://files.slack.com/a" } })
+			.mockResolvedValueOnce({ ok: true }).mockResolvedValueOnce({ ok: true, file: { id: "F3" } });
+		const { slack } = api({ files: { info } });
+		const files = await slack.resolveFiles([{ id: "F1", url_private: "" }, { id: "F2" }, { id: "F3" }]);
+		expect(info).toHaveBeenCalledTimes(3);
+		expect(files[0]?.url).toBe("https://files.slack.com/a");
+		expect(files[1]?.error).toContain("could not be resolved");
+		expect(files[2]?.error).toContain("could not be resolved");
+	});
+
 	it("posts long replies in several messages in the thread", async () => {
 		const { slack, calls } = api();
 		await slack.post("C1", "1.1", "x".repeat(5000));
@@ -122,6 +171,15 @@ describe("SlackApi", () => {
 		const { slack, calls } = api();
 		await slack.upload("C1", "1.1", Buffer.from("hi"), "a.txt", "here");
 		expect(calls[0]).toEqual(["upload", { channel_id: "C1", thread_ts: "1.1", file: Buffer.from("hi"), filename: "a.txt", initial_comment: "here" }]);
+	});
+
+	it("downloads HTML snippet bytes served as application/force-download", async () => {
+		const { slack } = api();
+		const html = "<!doctype html><title>Fixture</title>";
+		const fetch = vi.fn(async () => new Response(html, { status: 200, headers: { "content-type": "application/force-download" } }));
+		vi.stubGlobal("fetch", fetch);
+		expect((await slack.download("https://files.slack.com/download", 100)).toString()).toBe(html);
+		expect(fetch).toHaveBeenCalledWith("https://files.slack.com/download", expect.objectContaining({ headers: { authorization: "Bearer xoxb-test" } }));
 	});
 
 	it("refuses non-Slack URLs and explains the HTML page Slack sends without files:read", async () => {

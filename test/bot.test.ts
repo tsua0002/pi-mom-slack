@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readdirSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -24,7 +24,7 @@ vi.mock("../src/slack.ts", async (orig) => {
 			react: async (c: string, ts: string, name: string) => { h.calls.push(["react", c, ts, name]); },
 			unreact: async (c: string, ts: string, name: string) => { h.calls.push(["unreact", c, ts, name]); },
 			upload: async () => {},
-			download: async () => Buffer.from(""),
+			download: async () => Buffer.from("<!doctype html><title>Fixture</title>"),
 			userName: async (id: string) => (id === "U1" ? "Ada" : id),
 			resolveMentions: async (t: string) => t.replace("<@U2>", "@Bob"),
 		};
@@ -152,6 +152,26 @@ describe("createSlackBot", () => {
 		expect(posts()[2]).toBe("deploying staging");
 		expect(posts()[3]).toContain("`!deploy`");
 		expect(h.run).not.toHaveBeenCalled();
+	});
+
+	it("saves HTML attachments in the thread and supplies their path to pi", async () => {
+		const { dataDir } = await started();
+		let prompt = "";
+		h.run = async (_thread, text) => { prompt = text; return { text: "OK", aborted: false, tools: 0 }; };
+		await h.handler!(msg("Here", { files: [{ name: "projet.html", mimetype: "text/plain", size: 0, url: "https://files.slack.com/download" }] }));
+		expect(prompt).toContain("Attached files (in the working directory):");
+		const path = /- (files\/[^\n]+)/.exec(prompt)![1]!;
+		expect(readFileSync(join(dataDir, "threads", "C1-1_1", path), "utf8")).toBe("<!doctype html><title>Fixture</title>");
+	});
+
+	it("reports unresolved attachment metadata to both the user and pi", async () => {
+		await started();
+		let prompt = "";
+		h.run = async (_thread, text) => { prompt = text; return { text: "OK", aborted: false, tools: 0 }; };
+		await h.handler!(msg("Here", { files: [{ name: "F1", mimetype: "", size: 0, url: "", error: "Slack file lookup failed (missing_scope)" }] }));
+		expect(posts().some((p) => p.includes("File(s) not retrieved") && p.includes("missing_scope"))).toBe(true);
+		expect(prompt).toContain("Do not claim to have read them");
+		expect(prompt).toContain("missing_scope");
 	});
 
 	it("posts model errors and marks the run failed instead of successful", async () => {

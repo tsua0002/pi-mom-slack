@@ -111,6 +111,10 @@ The bot sends you a direct message when it is up. In a channel, invite it with `
 <img src="docs/screenshots/12-server-report.jpg" alt="Running on a server: the agent writes a system report, uploads it to the thread and sums it up" width="40%">
 <img src="docs/screenshots/11-model.jpg" alt="!model lists the models pi has credentials for" width="40%">
 
+### Files shared in a thread
+
+Files attached to an incoming message are downloaded into that thread's working directory and their paths are passed to pi. File-only messages and Slack snippet files are supported. When Slack sends only a file ID, the bot resolves its metadata with `files.info` (`files:read` required). Lookup or download failures are shown in the thread and passed to pi, rather than silently dropping the file. This does not import older attachments from thread history.
+
 ## Configuration
 
 | Variable | Default | |

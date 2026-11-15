@@ -1,6 +1,6 @@
 {
   "name": "pi-mom-slack",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Run the pi coding agent in Slack: one pi session per thread, in one command.",
   "license": "MIT",
   "author": "tsua0002",
