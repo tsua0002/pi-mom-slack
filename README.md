@@ -117,11 +117,32 @@ The bot sends you a direct message when it is up. In a channel, invite it with `
 |---|---|---|
 | `SLACK_APP_TOKEN` | required | app-level token, `xapp-…` |
 | `SLACK_BOT_TOKEN` | required | bot token, `xoxb-…` |
-| `PI_SLACK_ALLOWED_USERS` | required | Slack member IDs, comma separated |
+| `PI_SLACK_ALLOWED_USERS` | required | Slack member IDs, comma separated, or `*` for everyone who can reach the bot |
 | `PI_SLACK_DATA_DIR` | `~/.pi/slack` | thread working directories, run markers, state |
 | `PI_SLACK_ENV_FILE` | `./.env` | file read for the variables above |
 | `PI_SLACK_DEBUG` | | logs the type of each Slack event |
 | `PI_SLACK_SOCKET_DOWN_LIMIT_MS` | `180000` | if the Slack connection stays down this long, the process exits so a supervisor restarts it |
+
+### Multiple bots
+
+`configsFromEnv()` returns the base config (if either base token is set), plus profiles listed in `PI_SLACK_WORKSPACES=demo,other`. Without profiles, the existing three required variables are unchanged.
+
+Each profile requires `SLACK_APP_TOKEN_DEMO` and `SLACK_BOT_TOKEN_DEMO`. `PI_SLACK_ALLOWED_USERS_DEMO` overrides the global allowed-users list; otherwise it falls back to `PI_SLACK_ALLOWED_USERS`. An empty list is rejected. Use an explicit `*` to allow all users (this grants shell access).
+
+For example, keep the existing base tokens and add a second app:
+
+```dotenv
+PI_SLACK_ALLOWED_USERS=*
+PI_SLACK_WORKSPACES=second
+SLACK_APP_TOKEN_SECOND=xapp-…
+SLACK_BOT_TOKEN_SECOND=xoxb-…
+```
+
+The wildcard also covers resumed runs. It never receives startup DMs; add explicit user IDs alongside it to notify administrators (for example `*,U012ABCDEF`). Separate folders are not a security sandbox: these bots share the same host account and pi credentials. Do not expose this setup as a public untrusted demo.
+
+Names contain letters, digits, underscores or hyphens and start with a letter or digit. Variable suffixes are uppercase with hyphens replaced by underscores; duplicate or ambiguous names are rejected. Each bot requires a separate Slack app: duplicate app tokens are rejected.
+
+The base bot keeps `PI_SLACK_DATA_DIR` (default `~/.pi/slack`); profiles use `<base>/workspaces/<name>`. The CLI starts and stops all bots together and records process crashes in every data directory.
 
 Variables already set in the environment win over the file. Everything read from the file, plus any variable whose name looks like a credential (`TOKEN`, `SECRET`, `API_KEY`, `PASSWORD`…), is removed from the environment of the agent's shell. pi itself still reads your provider keys.
 
@@ -163,6 +184,31 @@ sudo loginctl enable-linger $USER   # keep it running after logout
 ```
 
 Pin the version and update it on purpose: the startup message lists what changed. `pi-mom-slack@latest` also works, but then every restart may run a release you have not read, including the automatic pi updates. Under systemd, `npx` must be on the unit's `PATH` (with nvm, set `Environment=PATH=…` to nvm's `bin` folder), or use `scripts/deploy-ssh.sh`, which does it for you.
+
+### Automatic Git updates (archive deployments)
+
+For an existing **user** `pi-mom-slack.service` installed by `deploy-ssh.sh`, the server does not need a `.git` directory. Run the installer **on the server as the service user**, with Git, Node/npm and `flock` available:
+
+```sh
+# us2, logged in as tota; copy both scripts to the server first
+bash scripts/install-auto-update.sh https://github.com/tsua0002/pi-mom-slack.git main /home/tota/pi-mom-slack
+```
+
+`main` is this repository's current branch (the local clone has no origin/HEAD default-branch reference). For another repository, supply its intended branch explicitly. The installer checks the running service and expects `ExecStart=<node> dist/cli.js`. It captures your current PATH for builds, so select Node 22.19+ before installing. Keep user linger enabled.
+
+The timer polls two minutes after boot/installation and two minutes after each completed check. A nonblocking lock prevents overlapping runs. A bare cache and commit-named releases live under `~/.local/share/pi-mom-slack-updates`. Each new commit must pass `npm ci`, build, type checks and tests before an atomic service drop-in changes `WorkingDirectory`. The existing ExecStart and service environment remain unchanged. Successfully activated commits are not restarted again.
+
+The drop-in sets `PI_SLACK_ENV_FILE` to the absolute existing app `.env` (for the example, `/home/tota/pi-mom-slack/.env`). Neither that file nor existing data is copied or deleted. Default data stays in `~/.pi/slack`; custom `PI_SLACK_DATA_DIR` must be absolute, including in the service environment. Convert relative paths to their **existing** absolute location first. Services with systemd `EnvironmentFile` directives require manual review and are rejected.
+
+If restart fails or the process exits/restarts during the 15-second observation window, the previous drop-in is restored and the previous service restarted. Health means only **the same process remains active**, not Slack connectivity or functional readiness. Failed commits are retried; releases/cache are not pruned. A power loss during switching requires operator review. Rollback does not undo data migrations. Updates execute trusted branch code and npm lifecycle scripts as your user; only enable this for repositories you trust. Restarts can interrupt in-flight work.
+
+```sh
+systemctl --user start pi-mom-slack-update.service  # check now
+journalctl --user -u pi-mom-slack-update -f
+systemctl --user disable --now pi-mom-slack-update.timer  # stop polling
+```
+
+Disabling the timer leaves the current release running. To return to the archive deployment, also stop any running update service, remove `~/.config/systemd/user/pi-mom-slack.service.d/90-auto-update.conf`, run `systemctl --user daemon-reload`, then restart `pi-mom-slack`. Keep the original app directory for rollback. Do not run archive deployment and automatic updates concurrently. The updater scripts themselves are installed snapshots; rerun the installer to upgrade them.
 
 ## Compared with mom
 

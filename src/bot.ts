@@ -45,7 +45,7 @@ export interface SlackBotHooks {
 export interface SlackBotOptions {
 	appToken: string;
 	botToken: string;
-	/** Slack member IDs allowed to talk to the bot. Required, never empty. */
+	/** Slack member IDs allowed to talk to the bot. Use "*" for everyone. Required, never empty. */
 	allowedUsers: string[];
 	/** Root of thread workspaces, run markers and the state file. */
 	dataDir: string;
@@ -79,6 +79,9 @@ export function createSlackBot(options: SlackBotOptions): SlackBotHandle {
 	if (!options.botToken?.startsWith("xoxb-")) throw new Error("botToken must be the bot token (xoxb-…)");
 	const allowed = new Set(options.allowedUsers.map((u) => u.trim()).filter(Boolean));
 	if (allowed.size === 0) throw new Error("allowedUsers is empty: list the Slack member IDs allowed to use the bot");
+
+	const isAllowed = (user: string) => allowed.has("*") || allowed.has(user);
+	const notifyUsers = [...allowed].filter((user) => user !== "*");
 
 	const { dataDir } = options;
 	const agents = new ThreadAgents({ dataDir, systemNote: options.systemNote, customTools: options.customTools, secretNames: options.secretNames });
@@ -197,7 +200,7 @@ export function createSlackBot(options: SlackBotOptions): SlackBotHandle {
 
 	async function handle(msg: IncomingMessage): Promise<void> {
 		const t = thread(msg.channel, msg.threadTs);
-		if (!allowed.has(msg.user)) {
+		if (!isAllowed(msg.user)) {
 			// Colleagues talking in a thread the bot follows are not addressing it: only answer a mention or a DM.
 			if (msg.isDirect || msg.mentioned) await t.post("_Not authorized. Ask the bot's owner to add your Slack member ID to PI_SLACK_ALLOWED_USERS._");
 			return;
@@ -225,7 +228,7 @@ export function createSlackBot(options: SlackBotOptions): SlackBotHandle {
 			void (async () => {
 				try {
 					bot.trackThread(marker.channel, marker.threadTs);
-					if (!allowed.has(marker.user)) {
+					if (!isAllowed(marker.user)) {
 						await t.post("_Cannot resume: the user who started the run is no longer allowed._");
 						markers.finish(marker);
 						return;
@@ -265,13 +268,13 @@ export function createSlackBot(options: SlackBotOptions): SlackBotHandle {
 				console.warn(`[pi-mom-slack] ${text}`);
 				if (warnedConnections) return;
 				warnedConnections = true;
-				for (const user of allowed) void slack.dm(user, `:warning: ${text}`).catch(() => {});
+				for (const user of notifyUsers) void slack.dm(user, `:warning: ${text}`).catch(() => {});
 			};
 			await bot.start();
-			console.log(`[pi-mom-slack] ${VERSION} (pi ${PI_VERSION}) connected · bot ${bot.botUserId} · data in ${dataDir} · ${allowed.size} allowed user(s)`);
+			console.log(`[pi-mom-slack] ${VERSION} (pi ${PI_VERSION}) connected · bot ${bot.botUserId} · data in ${dataDir} · ${allowed.has("*") ? "all users allowed" : `${allowed.size} allowed user(s)`}`);
 			await resumeInterrupted().catch((e) => console.error("[pi-mom-slack] reading run markers failed", e));
 			if (options.notifyOnStart !== false) {
-				for (const user of allowed) void slack.dm(user, `pi-mom-slack is up.\n${reason}`).catch((e) => console.warn(`[pi-mom-slack] startup message not sent to ${user}: ${errText(e)}`));
+				for (const user of notifyUsers) void slack.dm(user, `pi-mom-slack is up.\n${reason}`).catch((e) => console.warn(`[pi-mom-slack] startup message not sent to ${user}: ${errText(e)}`));
 			}
 			await options.hooks?.onStart?.({ reason, botUserId: bot.botUserId });
 		},

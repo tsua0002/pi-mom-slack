@@ -6,7 +6,7 @@
  */
 import { resolve } from "node:path";
 import { createSlackBot, recordCrash } from "./bot.ts";
-import { configFromEnv, loadEnvFile } from "./config.ts";
+import { configsFromEnv, loadEnvFile } from "./config.ts";
 import { PI_VERSION, VERSION } from "./version.ts";
 
 const HELP = `pi-mom-slack ${VERSION} (pi ${PI_VERSION})
@@ -18,7 +18,10 @@ Usage: npx pi-mom-slack
 Environment (or a .env file in the current directory):
   SLACK_APP_TOKEN         app-level token, xapp-… (scope connections:write)
   SLACK_BOT_TOKEN         bot token, xoxb-…
-  PI_SLACK_ALLOWED_USERS  Slack member IDs allowed to use the bot, comma separated
+  PI_SLACK_ALLOWED_USERS  Slack member IDs, comma separated, or explicit *
+  PI_SLACK_WORKSPACES    named profiles, comma separated (e.g. demo,other)
+                         use SLACK_APP_TOKEN_DEMO, SLACK_BOT_TOKEN_DEMO,
+                         PI_SLACK_ALLOWED_USERS_DEMO (falls back to global)
   PI_SLACK_DATA_DIR       thread workspaces and state (default ~/.pi/slack)
   PI_SLACK_ENV_FILE       env file to read (default ./.env)
 
@@ -36,20 +39,20 @@ if (arg === "--version" || arg === "-v") {
 }
 
 const secretNames = loadEnvFile(resolve(process.env.PI_SLACK_ENV_FILE ?? ".env"));
-let config: ReturnType<typeof configFromEnv>;
+let configs: ReturnType<typeof configsFromEnv>;
 try {
-	config = configFromEnv(process.env, secretNames);
+	configs = configsFromEnv(process.env, secretNames);
 } catch (e) {
 	console.error(`pi-mom-slack: configuration incomplete\n${e instanceof Error ? e.message : e}\n\nRun \`npx pi-mom-slack --help\` or see https://github.com/tsua0002/pi-mom-slack#readme`);
 	process.exit(1);
 }
 
-const bot = createSlackBot({ ...config });
+const bots = configs.map((config) => createSlackBot({ ...config }));
 
 const crash = (kind: string) => (err: unknown) => {
 	console.error(`[pi-mom-slack] ${kind}: ${err instanceof Error ? err.message : err}`);
 	if (process.env.PI_SLACK_DEBUG) console.error(err);
-	recordCrash(config.dataDir, err);
+	for (const config of configs) recordCrash(config.dataDir, err);
 	process.exit(1);
 };
 process.on("uncaughtException", crash("uncaughtException"));
@@ -57,8 +60,8 @@ process.on("unhandledRejection", crash("unhandledRejection"));
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
 	process.on(signal, () => {
 		console.log(`[pi-mom-slack] ${signal}, stopping…`);
-		void bot.stop(signal).finally(() => process.exit(0));
+		void Promise.allSettled(bots.map((bot) => bot.stop(signal))).finally(() => process.exit(0));
 	});
 }
 
-await bot.start().catch(crash("Slack connection failed"));
+await Promise.all(bots.map((bot) => bot.start())).catch(crash("Slack connection failed"));

@@ -87,6 +87,14 @@ describe("createSlackBot", () => {
 		expect(dms.some((t) => t.startsWith("pi-mom-slack is up.\nFirst start."))).toBe(true);
 	});
 
+	it("allows everyone with wildcard without sending DMs to the wildcard", async () => {
+		await started({ allowedUsers: ["*"] });
+		h.run = vi.fn(async () => ({ text: "OK", aborted: false, tools: 0 }));
+		await h.handler!(msg("hi", { user: "U9", mentioned: true }));
+		expect(h.run).toHaveBeenCalled();
+		expect(h.calls.filter(([k]) => k === "dm")).toEqual([]);
+	});
+
 	it("refuses unknown users without running anything", async () => {
 		await started();
 		h.run = vi.fn();
@@ -173,6 +181,15 @@ describe("createSlackBot", () => {
 		await vi.waitFor(() => expect(posts().some((p) => p.includes("abandoned after 2 attempts"))).toBe(true));
 		expect(resumed).toHaveBeenCalledTimes(1);
 		expect(readdirSync(join(dataDir, "active-runs"))).toEqual([]);
+	});
+
+	it("resumes an arbitrary user's run in wildcard mode", async () => {
+		const dataDir = mkdtempSync(join(tmpdir(), "bot-"));
+		new RunMarkers(dataDir).start({ channel: "C1", threadTs: "1.1", user: "U9" });
+		h.run = vi.fn(async () => ({ text: "Resumed.", aborted: false, tools: 0 }));
+		await createSlackBot({ appToken: "xapp-1", botToken: "xoxb-1", allowedUsers: ["*"], dataDir }).start();
+		await vi.waitFor(() => expect(posts()).toContain("Resumed."));
+		expect(new RunMarkers(dataDir).list()).toEqual([]);
 	});
 
 	it("records a clean stop for the next startup message", async () => {
