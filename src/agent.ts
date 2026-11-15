@@ -139,12 +139,22 @@ export class ThreadAgents {
 			const images = opts.images ?? [];
 			const readsImages = session.model?.input?.includes("image") ?? false;
 			const imageNote = images.length && !readsImages ? "\n\n(The current model does not read images: they are only saved in files/.)" : "";
+			const checkModelError = () => {
+				const last = session.messages.at(-1);
+				if (last?.role === "assistant" && last.stopReason === "error") {
+					throw new Error(last.errorMessage || "The model failed without an error message.");
+				}
+			};
 			await session.prompt(prompt + imageNote, readsImages && images.length ? { images } : undefined);
+			checkModelError();
 			// Models sometimes end the turn on "I will now…": push the work through instead of leaving an announcement.
 			for (let i = 0; i < MAX_CONTINUES && !aborted && looksLikeAnnouncement(session.getLastAssistantText() ?? ""); i++) {
 				await session.prompt(CONTINUE_PROMPT);
+				checkModelError();
 			}
-			return { text: session.getLastAssistantText() ?? "", aborted, tools };
+			const reply = session.getLastAssistantText() ?? "";
+			if (!aborted && !reply.trim()) throw new Error("The model returned an empty reply. Please try again later or choose another model with !model.");
+			return { text: reply, aborted, tools };
 		} finally {
 			this.processes.get(thread.key)?.cleanup();
 			unsubscribe();

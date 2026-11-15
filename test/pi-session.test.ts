@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
 
-type Step = { text: string } | { tool: string; args: Record<string, unknown> };
+type Step = { text: string } | { tool: string; args: Record<string, unknown> } | { error: string };
 const script: Step[] = [];
 const requests: { messages: { role: string; content: unknown }[] }[] = [];
 let server: Server;
@@ -25,6 +25,11 @@ beforeAll(async () => {
 		req.on("end", () => {
 			requests.push(JSON.parse(body));
 			const step = script.shift() ?? { text: "(script exhausted)" };
+			if ("error" in step) {
+				res.writeHead(400, { "content-type": "application/json" });
+				res.end(JSON.stringify({ error: { message: step.error, type: "invalid_request_error" } }));
+				return;
+			}
 			res.writeHead(200, { "content-type": "text/event-stream" });
 			res.write(chunk({ role: "assistant" }));
 			if ("text" in step) {
@@ -94,4 +99,21 @@ it("runs tools in the thread workspace, scrubs secrets, uploads, pushes past an 
 	expect(history).toContain("make a file and send it");
 	expect(history).not.toContain("Your current working directory belongs to this Slack thread\\n\\n[Ada] are you there?");
 	await restarted.disposeAll();
+}, 60_000);
+
+it("surfaces provider errors instead of returning an empty successful reply, then recovers", async () => {
+	const { ThreadAgents } = await import("../src/agent.ts");
+	const agents = new ThreadAgents({ dataDir: join(dir, "errors") });
+	const thread = { key: "errors", channel: "C1", threadTs: "2.1", workspace: agents.workspaceOf("errors"), post: async () => {}, upload: async () => {} };
+	try {
+		script.push({ error: "The usage limit has been reached" });
+		await expect(agents.run(thread, "hello")).rejects.toThrow("The usage limit has been reached");
+		expect(agents.isBusy(thread.key)).toBe(false);
+		script.push({ text: "Working again." });
+		expect((await agents.run(thread, "retry")).text).toBe("Working again.");
+		script.push({ text: "" });
+		await expect(agents.run(thread, "empty")).rejects.toThrow("The model returned an empty reply");
+	} finally {
+		await agents.disposeAll();
+	}
 }, 60_000);

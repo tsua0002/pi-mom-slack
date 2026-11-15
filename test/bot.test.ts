@@ -154,6 +154,16 @@ describe("createSlackBot", () => {
 		expect(h.run).not.toHaveBeenCalled();
 	});
 
+	it("posts model errors and marks the run failed instead of successful", async () => {
+		await started();
+		h.run = async () => { throw new Error("Codex error: The usage limit has been reached"); };
+		await h.handler!(msg("hello"));
+		expect(posts().at(-1)).toContain("Codex error: The usage limit has been reached");
+		expect(h.calls.some(([k, , , text]) => k === "update" && text === "_Failed_")).toBe(true);
+		expect(reactions()).toContain("react:warning");
+		expect(reactions()).not.toContain("react:white_check_mark");
+	});
+
 	it("refuses a second request while the thread is busy", async () => {
 		await started();
 		h.busy = true;

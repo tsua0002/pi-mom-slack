@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Show provider errors and empty model responses as failed runs in Slack instead of empty successful replies.
+
 - Add `configsFromEnv()` and multi-bot CLI profiles via `PI_SLACK_WORKSPACES`, with isolated data directories and separate Slack apps.
 - Allow all users with `PI_SLACK_ALLOWED_USERS=*`, including restart recovery, without sending DMs to the wildcard.
 - Add opt-in Git branch auto-updates with pre-deployment checks, a systemd timer and process-health rollback.
