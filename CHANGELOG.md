@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.3
+
+- Works with pi 1.6.0.
+
 ## Unreleased
 
 - Show provider errors and empty model responses as failed runs in Slack instead of empty successful replies.
