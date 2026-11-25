@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.4
+
+- Works with pi 1.6.1.
+
 ## 0.1.3
 
 - Works with pi 1.6.0.
